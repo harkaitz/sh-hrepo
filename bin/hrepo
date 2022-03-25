@@ -1,0 +1,137 @@
+#!/bin/sh -e
+#L:
+#L:  MIT License
+#L:  
+#l:  Bug reports, feature requests to gemini|https://harkadev.com/oss
+#l:  Copyright (c) 2022 Harkaitz Agirre, harkaitz.aguirre@gmail.com
+#L:
+#L:  Permission is hereby granted, free of charge, to any person obtaining
+#L:  a copy of this software and associated documentation files (the
+#L:  "Software"), to deal in the Software without restriction, including
+#L:  without limitation the rights to use, copy, modify, merge, publish,
+#L:  distribute, sublicense, and/or sell copies of the Software, and to
+#L:  permit persons to whom the Software is furnished to do so, subject to
+#L:  the following conditions:
+#L:
+#L:  The above copyright notice and this permission notice shall be
+#L:  included in all copies or substantial portions of the Software.
+#L:
+#L:  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+#L:  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+#L:  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+#L:  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+#L:  LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+#L:  OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+#L:  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#h: Usage: $0
+#h:
+#h: Usage: $0 [ARGS...]
+#h:
+#h: This script helps downloading and uploading files from and to
+#h: your private stores.
+#h:
+#h:     v show                 : Show configuration.
+#h:     u update               : Update file lists. (~/.hrepo.lst)
+#h:     l list                 : List files.
+#h:     s search   REGEX       : Get filenames.
+#h:     d download REGEX [DIR] : Download.
+#h:     p put      FILE  [DIR] : Upload file.
+#r:
+hrepo() {
+    local cmd="$1"
+    shift
+    case "${cmd}" in
+        v|show)     hrepo_show_variables ;;
+        u|update)   hrepo_update         ;;
+        l|list)     hrepo_list           ;;
+        s|search)   hrepo_search   "$@"  ;;
+        d|download) hrepo_download "$@"  ;;
+        p|put)      hrepo_put      "$@"  ;;
+        *)          hrepo_error "Invalid argument ${cmd}." ;;
+    esac
+}
+hrepo_show_variables() {
+    printf '%-30s : %s\n' HREPO_SSH_PATH  "${HREPO_SSH_PATH}"
+    printf '%-30s : %s\n' HREPO_CACHE     "${HREPO_CACHE}"
+    printf '%-30s : %s\n' HREPO_TMPDIR    "${HREPO_TMPDIR}"
+}
+hrepo_calc_variables() {
+    HREPO_SSH_PATH="${HREPO_SSH_PATH:-}"
+    HREPO_CACHE="${HREPO_CACHE:-${HOME}/.hrepo.lst}"
+    HREPO_TMPDIR="${HREPO_TMPDIR:-/tmp}"
+}
+## -------------------------------------------------------------------------
+hrepo_put() {
+    local file="$1" directory="$2"
+    if test ! -n "${HREPO_SSH_PATH}";then
+        hrepo_error "Please set HREPO_SSH_PATH."
+        return 1
+    elif test ! -n "${file}";then
+        return 1  
+    elif test ! -f "${file}";then
+        hrepo_errro "File ${file} does not exist."
+        return 1
+    fi
+    scp "${file}" "${HREPO_SSH_PATH}/${directory}"
+}
+hrepo_update() {
+    hrepo_info "Updating ${HREPO_CACHE} ..."
+    local m="` echo "${HREPO_SSH_PATH}" | sed    's|:.*||'                    `"
+    local p="` echo "${HREPO_SSH_PATH}" | sed -n 's|^[^:]*:||p' | tr ',' ' '  `"
+    ssh "${m}" '
+    if test -d "'"${p}"'";then
+        find "'"${p}"'" -type f 2>/dev/null 
+    fi' | sed "s|^|${m}:|" > "${HREPO_CACHE}"
+}
+hrepo_list() {
+    test ! -f "${HREPO_CACHE}" || cat "${HREPO_CACHE}"
+}
+hrepo_search() {
+    local regex="$1"
+    local found="`hrepo_list | grep "${regex}"`"
+    if test ! -n "${found}";then
+        hrepo_update
+        local found="`hrepo_list | grep "${regex}"`"
+    fi
+    if test ! -n "${found}";then
+        hrepo_error "Can't find a file matching ${regex}."
+        return 1
+    fi
+    echo "${found}"
+}
+hrepo_download() {
+    local rgx="$1" dir="${2:-${HREPO_TMPDIR}}" path=
+    ## Check directory exists.
+    if test ! -d "${dir}";then
+        hrepo_error "Directory '${dir}' does not exist."
+        return 1
+    fi
+    ## Search file.
+    local from="`hrepo_search "${rgx}" | head -n 1`"
+    test -n "${from}"
+    ## Check whether it is already downloaded.
+    local dest="${dir}/`basename "${from}"`"
+    if test -f "${dest}";then
+        echo "${dest}"
+        return 0
+    fi
+    ## Download.
+    if ! scp "`echo "${from}" | sed 's|\([ ()]\)|\\\\\1|g'`" "${dir}" >&2;then
+        return 1
+    fi  
+    echo "${dest}"
+}
+## -------------------------------------------------------------------------
+SCRNAME="`basename "$0"`"
+hrepo_error() { echo "${SCRNAME}: error: $*" >&2; }
+hrepo_info()  { echo "${SCRNAME}: $*"        >&2; }
+hrepo_calc_variables
+if test @"${SCRNAME}" = @"hrepo";then
+    if test -n "$1";then
+        hrepo "$@"
+    else
+        sed -n 's/^ *#h: \{0,1\}//p' "$0" | sed "s|\\\$0|`basename $0`|g"
+        echo ""
+        sed -n 's/^ *#l: \{0,2\}//p' "$0"
+    fi
+fi

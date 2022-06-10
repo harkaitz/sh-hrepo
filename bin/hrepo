@@ -100,7 +100,7 @@ hrepo_search() {
     echo "${found}"
 }
 hrepo_download() {
-    local rgx="$1" dir="${2:-${HREPO_TMPDIR}}" path=
+    local rgx="$1" dir="${2:-${HREPO_TMPDIR}}" path= sudo=
     ## Check directory exists.
     if test ! -d "${dir}";then
         hrepo_error "Directory '${dir}' does not exist."
@@ -116,7 +116,10 @@ hrepo_download() {
         return 0
     fi
     ## Download.
-    if ! scp "`echo "${from}" | sed 's|\([ ()]\)|\\\\\1|g'`" "${dir}" >&2;then
+    if test ! -w "${dir}";then
+        local sudo=sudo
+    fi
+    if ! ${sudo} scp -i ~/.ssh/id_rsa "`echo "${from}" | sed 's|\([ ()]\)|\\\\\1|g'`" "${dir}" >&2;then
         return 1
     fi  
     echo "${dest}"
